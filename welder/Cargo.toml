@@ -1,0 +1,8 @@
+[package]
+name = "welder"
+version = "0.1.0"
+authors = ["Arvid E. Picciani <aep@exys.org>"]
+
+[dependencies]
+nix  = {git = "https://github.com/nix-rust/nix.git"}
+error-chain = "0.10.0"
