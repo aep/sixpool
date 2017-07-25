@@ -1,20 +1,18 @@
-use blockstore::{BlockStore,Block};
+use blockstore::{BlockStore};
 use fuse::*;
 use index::{Index, Inode};
 use libc::ENOENT;
-use readchain::{ReadChain, ReadChainAble};
+use readchain::{Take,Chain};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, BufReader, Result};
+use std::io::{Read, Seek, SeekFrom};
 use time::Timespec;
 use std::boxed::Box;
 
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };                 // 1 second
 
 const CREATE_TIME: Timespec = Timespec { sec: 1381237736, nsec: 0 };    // 2013-10-08 08:56
-
-const HELLO_TXT_CONTENT: &'static str = "Hello World!\n";
 
 fn entry_to_file_attr(entry: &Inode) -> FileAttr{
     FileAttr {
@@ -45,7 +43,7 @@ fn entry_to_file_attr(entry: &Inode) -> FileAttr{
 pub struct Fuse<'a> {
     index:      &'a Index,
     blockstore: &'a BlockStore,
-    openFiles:  HashMap<u64, Box<Read + 'a>>,
+    open_files:  HashMap<u64, Box<Read + 'a>>,
 }
 
 impl<'a> Fuse<'a> {
@@ -53,7 +51,7 @@ impl<'a> Fuse<'a> {
         Fuse{
             index: index,
             blockstore: blockstore,
-            openFiles: HashMap::new(),
+            open_files: HashMap::new(),
         }
     }
 }
@@ -93,10 +91,10 @@ impl<'a>  Filesystem for Fuse<'a> {
             None => {reply.error(ENOENT);},
             Some(entry) => {
                 let mut fh = entry.i;
-                while self.openFiles.contains_key(&fh) {
+                while self.open_files.contains_key(&fh) {
                     fh += 1;
                 }
-                self.openFiles.insert(fh, Box::new(ReadChain::new(InodeReader::new(entry, self.blockstore))));
+                self.open_files.insert(fh, Box::new(entry.chain(self.blockstore)));
                 reply.opened(fh, 0);
             },
         };
@@ -104,16 +102,18 @@ impl<'a>  Filesystem for Fuse<'a> {
     fn release(&mut self,  _req: &Request, ino: u64, fh: u64,  _flags: u32, 
                _lock_owner: u64, _flush: bool, reply: ReplyEmpty) {
         println!("close {:?}", ino);
-        self.openFiles.remove(&fh);
+        self.open_files.remove(&fh);
+        reply.ok();
     }
 
     fn read (&mut self, _req: &Request, ino: u64, fh: u64, offset: u64, size: u32, reply: ReplyData) {
-        println!("read {:?} {}", ino, offset);
+        //TODO: i dont know if offset can be different than the last returned read size
+        println!("read {:?} {} {}", ino, offset, size);
 
-        let file = self.openFiles.get_mut(&fh).unwrap();
-        let mut buf = [0;512];
+        let file = self.open_files.get_mut(&fh).unwrap();
+
+        let mut buf = vec![0; size as usize];
         let r = file.read(&mut buf).unwrap();
-        println!("  > {}", r);
         reply.data(&buf[..r]);
     }
 
@@ -149,35 +149,18 @@ impl<'a>  Filesystem for Fuse<'a> {
     }
 }
 
-pub struct InodeReader<'a> {
-    inode: &'a Inode,
-    blockstore: &'a BlockStore,
-}
+impl Inode {
+    fn chain<'a>(&'a self, blockstore: &'a BlockStore) -> Chain<'a, Take<Chain<'a, Take<File>>>> {
+        let c = self.c.as_ref().unwrap();
+        let it = c.iter().map(move |c| {
+            println!("reading from block {} offset  {} limit {}", c.h, c.o, c.l);
 
-impl<'a> InodeReader<'a> {
-    pub fn new(inode: &'a Inode, blockstore: &'a BlockStore) -> InodeReader<'a> {
-        InodeReader{
-            inode: inode,
-            blockstore: blockstore,
-        }
-    }
-}
+            let block = blockstore.get(&c.h).expect("block not found");
+            let mut re = block.chain();
+            re.seek(SeekFrom::Current(c.o as i64)).unwrap();
+            Take::limit(re, c.l as usize)
 
-impl<'a> ReadChainAble<ReadChain<&'a Block, File>> for InodeReader<'a>{
-    fn len(&self) -> usize {
-        match self.inode.c {
-            Some(ref c) => c.len(),
-            _ => 0,
-        }
-    }
-    fn at(&self, i: usize) -> (ReadChain<&'a Block, File>, usize) {
-        let c = &self.inode.c.as_ref().unwrap()[i];
-        let block = self.blockstore.get(&c.h).expect("block not found");
-        let mut re = ReadChain::new(block);
-
-        println!("opening block from {} len {} hash {}", c.o, c.l, c.h);
-
-        re.seek(SeekFrom::Start(c.o as u64)).unwrap();
-        (re, c.l as usize)
+        });
+        Chain::new(Box::new(it))
     }
 }

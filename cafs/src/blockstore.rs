@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{Read, Seek, BufReader, Result};
+use std::io::{Read, Seek, BufReader};
 use std::fs::File;
 use sha2::{Sha512, Digest};
 use std::io::SeekFrom;
-use readchain::{ReadChainAble,ReadChain};
-use std;
+use readchain::{Take,Chain};
 
 pub struct BlockStore {
     pub blocks: HashMap<String, Block>,
@@ -31,27 +30,23 @@ pub fn new() -> BlockStore {
 
 
 impl BlockStore {
-    pub fn get(&self, hash: &String) -> Option<&Block> {
+    pub fn get<'a>(&'a self, hash: &String) -> Option<&'a Block> {
         self.blocks.get(hash)
     }
     pub fn insert(&mut self, hash: String, block: Block) {
 
-        //debug
-        {
-        }
-
         //sanity check on hash
         {
-            let mut br = BufReader::new(ReadChain::new(&block));
+            let mut br = BufReader::new(block.chain());
             let hs = Sha512::digest_reader(&mut br).unwrap();
             let hs = format!("{:x}", hs);
             if hs != hash {
 
-                let mut br = BufReader::new(ReadChain::new(&block));
+                let mut br = BufReader::new(block.chain());
                 let mut content = Vec::new();
-                let rs = br.read_to_end(&mut content);
+                let rs = br.read_to_end(&mut content).unwrap();
 
-                if content.len() != block.size {
+                if rs != block.size {
                     panic!(format!("BUG: block should be {} bytes but did read {}", block.size, content.len()));
                 }
 
@@ -69,8 +64,8 @@ impl BlockStore {
         //collision check
         if self.blocks.contains_key(&hash) {
 
-            let mut ra = BufReader::new(ReadChain::new(&block));
-            let mut rb = BufReader::new(ReadChain::new(&self.blocks[&hash]));
+            let mut ra = BufReader::new(block.chain());
+            let mut rb = BufReader::new(self.blocks[&hash].chain());
             loop {
                 let mut a: [u8;1024] = [0; 1024];
                 let mut b: [u8;1024] = [0; 1024];
@@ -92,29 +87,17 @@ impl BlockStore {
 
         self.blocks.insert(hash, block);
     }
+
 }
 
-
-impl ReadChainAble<File> for Block {
-    fn len(&self) -> usize {
-        self.shards.len()
-    }
-    fn at(&self, i: usize) -> (File, usize) {
-        let ref shard = self.shards[i];
-        let mut f = File::open(&shard.file).unwrap();
-        f.seek(SeekFrom::Start(shard.offset as u64)).unwrap();
-        (f, shard.size)
-    }
-}
-
-impl<'a> ReadChainAble<File> for &'a Block {
-    fn len(&self) -> usize {
-        self.shards.len()
-    }
-    fn at(&self, i: usize) -> (File, usize) {
-        let ref shard = self.shards[i];
-        let mut f = File::open(&shard.file).unwrap();
-        f.seek(SeekFrom::Start(shard.offset as u64)).unwrap();
-        (f, shard.size)
+impl Block {
+    pub fn chain<'a>(&'a self) -> Chain<'a, Take<File>> {
+        let it = self.shards.iter().map(|shard| {
+            println!("opening block shard {:?} offset  {} limit {}", shard.file, shard.offset, shard.size);
+            let mut f = File::open(&shard.file).unwrap();
+            f.seek(SeekFrom::Current(shard.offset as i64)).unwrap();
+            Take::limit(f, shard.size)
+        });
+        Chain::new(Box::new(it))
     }
 }

@@ -7,7 +7,8 @@ extern crate serde_json;
 extern crate serde_derive;
 extern crate sha2;
 extern crate digest;
-extern crate cdc;
+extern crate readchain;
+extern crate rollsum;
 
 use std::env;
 use std::ffi::OsStr;
@@ -16,7 +17,6 @@ mod fs;
 mod serializer;
 mod index;
 mod blockstore;
-mod readchain;
 
 
 
@@ -41,4 +41,12 @@ fn main() {
     let fuse_args: Vec<&OsStr> = vec![&OsStr::new("-o"), &OsStr::new("auto_unmount")];
     fuse::mount(fs, &mountpoint, &fuse_args).unwrap();
 
+}
+
+
+#[test]
+fn snail() {
+    let mut bs = blockstore::new();
+    let mut hi = index::from_host(std::ffi::OsString::from("."));
+    hi.serialize(&mut bs);
 }

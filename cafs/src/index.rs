@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Inode {
     pub i: u64,     //inode (might later use this as offset into the binary formated index)
     pub p: u64,     //parent
@@ -17,14 +17,14 @@ pub struct Inode {
     pub host_path: std::ffi::OsString, // full path. will not be stored
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ContentBlockEntry {
     pub h: String,  //block hash
     pub o: u64,     //offset into block
     pub l: u64,     //length into block
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ContentDirEntry {
     pub i: u64,     //inode
     pub k: u16,     //kind
