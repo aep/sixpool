@@ -93,7 +93,6 @@ impl BlockStore {
 impl Block {
     pub fn chain<'a>(&'a self) -> Chain<'a, Take<File>> {
         let it = self.shards.iter().map(|shard| {
-            println!("opening block shard {:?} offset  {} limit {}", shard.file, shard.offset, shard.size);
             let mut f = File::open(&shard.file).unwrap();
             f.seek(SeekFrom::Current(shard.offset as i64)).unwrap();
             Take::limit(f, shard.size)

@@ -17,3 +17,4 @@ sha2 = "0.6.0"
 digest = { version = "0.6", features = ["std"]}
 rollsum = "0.2.1"
 readchain = {path = "../readchain"}
+pbr = "1.0.0"

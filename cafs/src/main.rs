@@ -9,6 +9,7 @@ extern crate sha2;
 extern crate digest;
 extern crate readchain;
 extern crate rollsum;
+extern crate pbr;
 
 use std::env;
 use std::ffi::OsStr;
@@ -27,8 +28,8 @@ fn main() {
     let mut hi = index::from_host(i);
     hi.serialize(&mut bs);
 
-    let j   = serde_json::to_string(&hi).unwrap();
-    println!("{}", j);
+    //let j   = serde_json::to_string(&hi).unwrap();
+    //println!("{}", j);
 
 
     //for (hash,block) in bs.blocks {
@@ -40,7 +41,6 @@ fn main() {
     let mountpoint  = env::args_os().nth(2).unwrap();
     let fuse_args: Vec<&OsStr> = vec![&OsStr::new("-o"), &OsStr::new("auto_unmount")];
     fuse::mount(fs, &mountpoint, &fuse_args).unwrap();
-
 }
 
 
@@ -49,4 +49,5 @@ fn snail() {
     let mut bs = blockstore::new();
     let mut hi = index::from_host(std::ffi::OsString::from("."));
     hi.serialize(&mut bs);
+
 }

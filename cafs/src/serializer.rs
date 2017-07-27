@@ -5,6 +5,10 @@ use rollsum;
 use sha2::{Sha512, Digest};
 use index::*;
 use blockstore::{Block, BlockStore, BlockShard};
+use pbr::ProgressBar;
+use std::ffi::OsString;
+use std::io::Stdout;
+
 
 struct IntermediateBlockRef {
     inode:       u64,
@@ -14,15 +18,23 @@ struct IntermediateBlockRef {
 }
 
 
+fn print_progress_bar(bar: &mut ProgressBar<Stdout>, path: &OsString){
+    let mut s = path.to_str().unwrap();
+    if s.len() > 40 {
+        bar.message(&format!("..{:38} ", &s[s.len()-38..]));
+    } else {
+        bar.message(&format!("{:40} ", &s));
+    }
+}
+
 impl Index {
     fn emit_block(&mut self, blockstore: &mut BlockStore, len: usize, hash: String, inodes: &Vec<IntermediateBlockRef>) {
-        println!("block {}, {} from {} files", hash, len, inodes.len());
 
         let mut block_shards = Vec::new();
 
         for ibr in inodes {
-            println!("   inode {} at offset {} is {} into the block with size {}",
-                     ibr.inode, ibr.file_start, ibr.block_start, ibr.file_end - ibr.file_start);
+            //println!("   inode {} at offset {} is {} into the block with size {}",
+            //         ibr.inode, ibr.file_start, ibr.block_start, ibr.file_end - ibr.file_start);
             block_shards.push(BlockShard{
                 file:    self.inodes[ibr.inode as usize].host_path.clone(),
                 offset:  ibr.file_start,
@@ -46,8 +58,11 @@ impl Index {
     }
 
     pub fn serialize(&mut self, blockstore: &mut BlockStore) {
+        let mut bar = ProgressBar::new(self.inodes.len() as u64);
+        bar.show_speed = false;
+        bar.show_time_left = false;
 
-        let mut chunker = rollsum::Bup::new_with_chunk_bits(15);
+        let mut chunker = rollsum::Bup::new_with_chunk_bits(13);
         let mut hasher  = Sha512::default();
 
         let mut current_block_len = 0;
@@ -56,12 +71,14 @@ impl Index {
 
         let inodes = self.inodes.to_vec();
         for inode in inodes {
+            bar.inc();
             if inode.k != 2 {
                 continue;
             }
+            print_progress_bar(&mut bar, &inode.host_path);
+
 
             let mut file = BufReader::new(File::open(&inode.host_path).unwrap());
-            println!("reading {} {:?}", inode.i, inode.host_path);
             current_files_in_block.push(IntermediateBlockRef{
                 inode: inode.i,
                 file_start: 0,
@@ -109,120 +126,15 @@ impl Index {
         }
         let hash = format!("{:x}", hasher.result());
         self.emit_block(blockstore, current_block_len, hash, &current_files_in_block);
+
+        let total_block_size = blockstore.blocks.iter().fold(0, |acc, (_,b)| acc + b.size);
+        let total_inode_size = self.inodes.iter().fold(0, |acc, i| acc + i.s);
+        bar.finish_print("");
+
+
+        let pc = (total_block_size as f32 / total_inode_size as f32) * 100.0;
+        println!("done serializing {} inodes to {} blocks with total size of {} bytes ({:.0}% of inodes size)",
+                 self.inodes.len(), blockstore.blocks.len(), total_block_size, pc);
+
     }
-
-
-
-    /*
-
-    pub fn serialize(&mut self, blockstore: &mut BlockStore) {
-        // window_size: 1 << 6 == 64 bytes
-        let separator_size_nb_bits = 6;
-
-        let mut rabin  = Rabin64::new(separator_size_nb_bits);
-        let mut hasher = Sha512::default();
-
-        let mut curent_block_nr      = 0; //linear count only for intermediate
-        let mut current_block_offset = 0; //current offset into the block (since the last file end)
-        let mut current_file_offset  = 0; //where the file was when we ended the last block
-        let mut current_file_len     = 0; //current length of the file being read (since the last block start)
-        let mut current_block_len    = 0; //just the size of the block
-
-        let mut intermediate : Vec<IntermediateBlockRef> = Vec::new();
-        let mut blocks : Vec<String> = Vec::new();
-        let mut blocklens : Vec<usize> = Vec::new();
-
-
-        for inode in &self.inodes {
-            if inode.k != 2 {
-                continue;
-            }
-            let mut file = BufReader::new(File::open(&inode.host_path).unwrap());
-            println!("reading {:?}", inode.host_path);
-
-
-            let mut buf = [0;512];
-            loop {
-                let rs = file.read(&mut buf).unwrap();
-                if rs < 1 {
-                    break;
-                }
-                let bbuf = &buf[..rs];
-
-                current_file_len  += rs;
-                current_block_len += rs;
-
-                hasher.input(bbuf);
-
-                rabin.slide(&bbuf[0]); //TODO
-
-                if (predicate)(rabin.hash) {
-                    let hs = format!("{:x}", hasher.result());
-                    blocks.push(hs);
-                    println!(" > {}", current_block_len);
-                    blocklens.push(current_block_len);
-                    hasher = Sha512::default();
-
-                    intermediate.push(IntermediateBlockRef{
-                        inode:   inode.i,
-                        blockno: curent_block_nr,
-                        offset:  current_block_offset,
-                        size:    current_file_len,
-                        foffset: current_file_offset,
-                    });
-                    current_file_offset += current_file_len;
-                    current_file_len = 0;
-                    current_block_offset = 0;
-                    curent_block_nr += 1;
-                    current_block_len = 0;
-                }
-            }
-
-            println!(" > {}", current_block_len);
-            intermediate.push(IntermediateBlockRef{
-                inode:   inode.i,
-                blockno: curent_block_nr,
-                offset:  current_block_offset,
-                size:    current_file_len,
-                foffset: current_file_offset,
-            });
-            current_block_offset = current_file_len;
-            current_file_len = 0;
-            current_file_offset = 0;
-        }
-        let hs = format!("{:x}", hasher.result());
-        blocks.push(hs);
-        blocklens.push(current_block_len);
-
-        let mut fblocks = Vec::new();
-        for x in 0..blocks.len() {
-            fblocks.push(Block{
-                shards: Vec::new(),
-                size:   blocklens[x],
-            })
-        }
-
-        for int in intermediate {
-            fblocks[int.blockno].shards.push(BlockShard{
-                file:    self.inodes[int.inode as usize].host_path.clone(),
-                offset:  int.foffset,
-                size:    int.size,
-            });
-
-            match self.inodes[int.inode as usize].c {
-                None => panic!("BUG: me fail borrowck"),
-                Some(ref mut c) => c.push(ContentBlockEntry{
-                    h: blocks[int.blockno].clone(),
-                    o: int.offset as u64,
-                    l: int.size as u64,
-                }),
-            }
-        }
-
-        for _ in 0..blocks.len() {
-            blockstore.insert(blocks.remove(0), fblocks.remove(0));
-        }
-    }
-*/
 }
-
