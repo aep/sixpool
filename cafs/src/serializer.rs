@@ -31,7 +31,7 @@ impl Index {
     fn emit_block(&mut self, blockstore: &mut BlockStore, len: usize, hash: String, inodes: &Vec<IntermediateBlockRef>) {
 
         let mut block_shards = Vec::new();
-
+        //println!("block {}", hash);
         for ibr in inodes {
             //println!("   inode {} at offset {} is {} into the block with size {}",
             //         ibr.inode, ibr.file_start, ibr.block_start, ibr.file_end - ibr.file_start);
@@ -92,34 +92,37 @@ impl Index {
                 if rs < 1 {
                     break;
                 }
+                let mut restart = 0;
 
-                if let Some(count) = chunker.find_chunk_edge(&buf[..rs]) {
-                    current_block_len += count;
-                    current_file_pos  += count;
+                loop {
+                    if let Some(count) = chunker.find_chunk_edge(&buf[restart..rs]) {
+                        current_block_len += count;
+                        current_file_pos  += count;
 
-                    current_files_in_block.last_mut().as_mut().unwrap().file_end = current_file_pos;
+                        current_files_in_block.last_mut().as_mut().unwrap().file_end = current_file_pos;
 
-                    hasher.input(&buf[..count]);
-                    let hash = format!("{:x}", hasher.result());
-                    hasher  = Sha512::default();
+                        hasher.input(&buf[restart..restart+count]);
+                        let hash = format!("{:x}", hasher.result());
+                        hasher  = Sha512::default();
 
-                    self.emit_block(blockstore, current_block_len, hash, &current_files_in_block);
-                    current_files_in_block.clear();
-                    current_files_in_block.push(IntermediateBlockRef{
-                        inode: inode.i,
-                        file_start: current_file_pos,
-                        file_end:   0,
-                        block_start: 0,
-                    });
+                        self.emit_block(blockstore, current_block_len, hash, &current_files_in_block);
+                        current_files_in_block.clear();
+                        current_files_in_block.push(IntermediateBlockRef{
+                            inode: inode.i,
+                            file_start: current_file_pos,
+                            file_end:   0,
+                            block_start: 0,
+                        });
 
-                    hasher.input(&buf[count..rs]);
-                    current_block_len  = rs - count;
-                    current_file_pos  += rs - count;
-                } else {
-                    hasher.input(&buf[..rs]);
-                    current_block_len += rs;
-                    current_file_pos  += rs;
+                        current_block_len  = 0;
+                        restart += count;
+                    } else {
+                        break;
+                    }
                 }
+                hasher.input(&buf[restart..rs]);
+                current_block_len += rs - restart;
+                current_file_pos  += rs - restart;
             }
             current_files_in_block.last_mut().as_mut().unwrap().file_end = current_file_pos;
             current_file_pos = 0;

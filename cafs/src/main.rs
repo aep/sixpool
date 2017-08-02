@@ -7,7 +7,6 @@ extern crate serde_json;
 extern crate serde_derive;
 extern crate sha2;
 extern crate digest;
-extern crate readchain;
 extern crate rollsum;
 extern crate pbr;
 
@@ -18,6 +17,7 @@ mod fs;
 mod serializer;
 mod index;
 mod blockstore;
+mod readchain;
 
 
 
@@ -32,9 +32,7 @@ fn main() {
     //println!("{}", j);
 
 
-    //for (hash,block) in bs.blocks {
-    //    println!("{}", hash);
-    //}
+    return;
 
     let fs = fs::Fuse::new(&hi, &bs);
 
